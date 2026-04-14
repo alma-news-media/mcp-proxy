@@ -48,7 +48,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Do not pass --download-plugins: it exits after fetching plugins and never creates a release.
           ./semantic-release \
-            --download-plugins \
             --show-progress \
             --allow-no-changes
