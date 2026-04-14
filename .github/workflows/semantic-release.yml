@@ -8,6 +8,7 @@ on:
     branches:
       - master
       - main
+  workflow_dispatch:
 
 concurrency:
   group: semantic-release
@@ -43,6 +44,7 @@ jobs:
           mv "${asset}" semantic-release
           chmod +x semantic-release
 
+      # commit-analyzer-cz defaults to patch=fix only; .semrelrc adds chore/ci/docs/etc.
       - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

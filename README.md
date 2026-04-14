@@ -28,7 +28,7 @@ go build -o mcp-proxy .
 
 ### Install via Go
 
-Releases are tagged automatically with [go-semantic-release](https://github.com/go-semantic-release/semantic-release) from [Conventional Commits](https://www.conventionalcommits.org/) on `master` / `main` (`feat:`, `fix:`, etc.), so `go install` can resolve versions from the module proxy:
+Releases are tagged automatically with [go-semantic-release](https://github.com/go-semantic-release/semantic-release) from [Conventional Commits](https://www.conventionalcommits.org/) on `master` / `main`. The commit analyzer treats `feat` as minor bumps and `fix`, `chore`, `ci`, `docs`, and several other types as patch bumps (see `.semrelrc`). That way `go install` can resolve versions from the module proxy:
 
 ```bash
 go install github.com/alma-news-media/mcp-proxy@latest
