@@ -8,9 +8,12 @@ import (
 	"syscall"
 )
 
-// listenTCPReuseAddr binds addr with SO_REUSEADDR so the same port can be
-// taken again soon after the process exits, instead of staying unavailable
-// while the kernel holds TIME_WAIT state on the old socket.
+// soExclusiveAddrUse is WinSock SO_EXCLUSIVEADDRUSE (exclusive bind). The name is not exported
+// from package syscall on Windows; the value is -5 per Windows SDK winsock2.h.
+const soExclusiveAddrUse = -5
+
+// listenTCPReuseAddr binds addr with SO_EXCLUSIVEADDRUSE (not SO_REUSEADDR) so the listener
+// holds the port exclusively and another process cannot bind the same address/port.
 func listenTCPReuseAddr(addr string) (net.Listener, error) {
 	lc := net.ListenConfig{
 		Control: reuseAddrControl,
@@ -21,7 +24,7 @@ func listenTCPReuseAddr(addr string) (net.Listener, error) {
 func reuseAddrControl(network, address string, c syscall.RawConn) error {
 	var sockErr error
 	if err := c.Control(func(fd uintptr) {
-		sockErr = syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+		sockErr = syscall.SetsockoptInt(syscall.Handle(fd), syscall.SOL_SOCKET, soExclusiveAddrUse, 1)
 	}); err != nil {
 		return err
 	}

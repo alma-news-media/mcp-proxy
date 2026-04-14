@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -94,6 +95,52 @@ func TestHandleConfigMerge_Conflict(t *testing.T) {
 	}
 }
 
+func requireMergeResponseOK(t *testing.T, w *httptest.ResponseRecorder) configMergeResponse {
+	t.Helper()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	var resp configMergeResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	return resp
+}
+
+func assertMergeResponseAddrAndServerNames(t *testing.T, resp configMergeResponse, wantAddr string, wantNames []string) {
+	t.Helper()
+	if resp.Addr != wantAddr {
+		t.Errorf("addr = %q, want %q", resp.Addr, wantAddr)
+	}
+	got := slices.Clone(resp.Servers)
+	slices.Sort(got)
+	wantSorted := slices.Clone(wantNames)
+	slices.Sort(wantSorted)
+	if !slices.Equal(got, wantSorted) {
+		t.Errorf("servers = %v, want %v", resp.Servers, wantNames)
+	}
+}
+
+func assertDaemonAddNewServerMergeState(t *testing.T, d *daemon) {
+	t.Helper()
+	if d.config.McpServers["newsvc"] == nil {
+		t.Fatal("expected merged config to include newsvc")
+	}
+	ns := d.config.McpServers["newsvc"]
+	if ns.TransportType != MCPClientTypeStreamable {
+		t.Errorf("newsvc transportType = %q, want streamable-http", ns.TransportType)
+	}
+	if ns.URL != "https://127.0.0.1:9/newsvc" {
+		t.Errorf("newsvc URL = %q", ns.URL)
+	}
+	if ns.Headers["Authorization"] != "Bearer newsvc" {
+		t.Errorf("newsvc headers = %v", ns.Headers)
+	}
+	if d.config.McpServers["github"].URL != "https://127.0.0.1:9/existing" {
+		t.Errorf("github URL mutated: %q", d.config.McpServers["github"].URL)
+	}
+}
+
 func TestHandleConfigMerge_IdenticalNoOp(t *testing.T) {
 	d := newTestDaemon(map[string]*MCPClientConfigV2{
 		"github": {
@@ -117,20 +164,38 @@ func TestHandleConfigMerge_IdenticalNoOp(t *testing.T) {
 
 	d.handleConfigMerge(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusOK, w.Body.String())
-	}
+	resp := requireMergeResponseOK(t, w)
+	assertMergeResponseAddrAndServerNames(t, resp, "localhost:9090", []string{"github"})
+}
 
-	var resp configMergeResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to parse response: %v", err)
-	}
-	if resp.Addr != "localhost:9090" {
-		t.Errorf("addr = %q, want %q", resp.Addr, "localhost:9090")
-	}
-	if len(resp.Servers) != 1 || resp.Servers[0] != "github" {
-		t.Errorf("servers = %v, want [github]", resp.Servers)
-	}
+func TestHandleConfigMerge_AddNewServer(t *testing.T) {
+	// Unreachable URLs; default PanicIfInvalid is false so wireServers still completes after failed handshakes.
+	d := newTestDaemon(map[string]*MCPClientConfigV2{
+		"github": {
+			TransportType: MCPClientTypeStreamable,
+			URL:           "https://127.0.0.1:9/existing",
+			Headers:       map[string]string{"Authorization": "Bearer existing"},
+			Options:       &OptionsV2{}, // prepareServerJobs reads Options.Disabled
+		},
+	})
+
+	body := `{
+		"mcpServers": {
+			"newsvc": {
+				"transportType": "streamable-http",
+				"url": "https://127.0.0.1:9/newsvc",
+				"headers": {"Authorization": "Bearer newsvc"}
+			}
+		}
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader(body))
+	w := httptest.NewRecorder()
+
+	d.handleConfigMerge(w, req)
+
+	resp := requireMergeResponseOK(t, w)
+	assertMergeResponseAddrAndServerNames(t, resp, "localhost:9090", []string{"github", "newsvc"})
+	assertDaemonAddNewServerMergeState(t, d)
 }
 
 func TestHandleConfigMerge_MultipleConflicts(t *testing.T) {
