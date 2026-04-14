@@ -11,8 +11,6 @@ import (
 // TCP (SO_REUSEADDR on Unix, SO_EXCLUSIVEADDRUSE on Windows, plain Listen on
 // other GOOS) without asserting OS-specific syscall values.
 func TestListenTCPReuseAddr_SequentialRebind(t *testing.T) {
-	t.Parallel()
-
 	ln1, err := listenTCPReuseAddr("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("first listen: %v", err)
@@ -33,8 +31,6 @@ func TestListenTCPReuseAddr_SequentialRebind(t *testing.T) {
 
 // TestListenTCPReuseAddr_BindsTCP ensures we get a TCP listener with a non-nil address.
 func TestListenTCPReuseAddr_BindsTCP(t *testing.T) {
-	t.Parallel()
-
 	ln, err := listenTCPReuseAddr("127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
