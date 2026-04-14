@@ -131,7 +131,7 @@ func startDaemon(config *Config) error {
 	return runDaemonUntilSignal(d, config)
 }
 
-// newDaemonForConfig prepares PID file, optional initial wiring, and the HTTP server; it does not listen yet.
+// newDaemonForConfig prepares optional initial wiring and the HTTP server; it does not listen or write the PID file yet.
 func newDaemonForConfig(config *Config) (*daemon, error) {
 	baseURL, err := url.Parse(config.McpProxy.BaseURL)
 	if err != nil {
@@ -152,11 +152,6 @@ func newDaemonForConfig(config *Config) (*daemon, error) {
 		baseURL: baseURL,
 		ctx:     ctx,
 		cancel:  cancel,
-	}
-
-	if err := d.writePIDFile(); err != nil {
-		cancel()
-		return nil, err
 	}
 
 	d.hSwitch = &swappableHandler{}
@@ -185,13 +180,12 @@ func runDaemonUntilSignal(d *daemon, config *Config) error {
 	socketPath := daemonSocketPath()
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
-		d.cleanup()
+		// Do not remove PID/socket paths: bind failed; cleanup could delete another daemon's files.
 		d.cancel()
 		return fmt.Errorf("listen unix socket: %w", err)
 	}
 	if err := os.Chmod(socketPath, 0o600); err != nil {
 		ln.Close()
-		d.cleanup()
 		d.cancel()
 		return fmt.Errorf("chmod socket: %w", err)
 	}
@@ -201,15 +195,6 @@ func runDaemonUntilSignal(d *daemon, config *Config) error {
 	socketMux.HandleFunc("POST /config", d.handleConfigMerge)
 	d.socketServer = &http.Server{Handler: socketMux}
 
-	errChan := make(chan error, 2)
-
-	go func() {
-		log.Printf("Unix socket listening on %s", socketPath)
-		if sErr := d.socketServer.Serve(ln); sErr != nil && !errors.Is(sErr, http.ErrServerClosed) {
-			errChan <- fmt.Errorf("unix socket server: %w", sErr)
-		}
-	}()
-
 	tcpLn, err := listenTCPReuseAddr(config.McpProxy.Addr)
 	if err != nil {
 		_ = d.socketServer.Shutdown(context.Background())
@@ -218,6 +203,23 @@ func runDaemonUntilSignal(d *daemon, config *Config) error {
 		d.cancel()
 		return fmt.Errorf("listen tcp: %w", err)
 	}
+
+	if err := d.writePIDFile(); err != nil {
+		_ = d.socketServer.Shutdown(context.Background())
+		ln.Close()
+		d.cleanup()
+		d.cancel()
+		return fmt.Errorf("write daemon PID file: %w", err)
+	}
+
+	errChan := make(chan error, 2)
+
+	go func() {
+		log.Printf("Unix socket listening on %s", socketPath)
+		if sErr := d.socketServer.Serve(ln); sErr != nil && !errors.Is(sErr, http.ErrServerClosed) {
+			errChan <- fmt.Errorf("unix socket server: %w", sErr)
+		}
+	}()
 
 	go func() {
 		log.Printf("Starting %s server", config.McpProxy.Type)
@@ -229,15 +231,17 @@ func runDaemonUntilSignal(d *daemon, config *Config) error {
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	var runErr error
 	select {
 	case <-sigChan:
 		log.Println("Shutdown signal received")
 	case err := <-errChan:
 		log.Printf("Server error: %v", err)
+		runErr = err
 	}
 
 	d.shutdown()
-	return nil
+	return runErr
 }
 
 func (d *daemon) writePIDFile() error {
@@ -274,6 +278,35 @@ func (d *daemon) shutdown() {
 	log.Println("Daemon shut down cleanly")
 }
 
+type configMergeIncoming struct {
+	McpServers map[string]*MCPClientConfigV2 `json:"mcpServers"`
+}
+
+// parseConfigMergeIncoming unmarshals and validates a POST /config body. On failure it writes
+// the HTTP response and returns (nil, false).
+func parseConfigMergeIncoming(body []byte, w http.ResponseWriter) (*configMergeIncoming, bool) {
+	var incoming configMergeIncoming
+	if err := json.Unmarshal(body, &incoming); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return nil, false
+	}
+	if len(incoming.McpServers) == 0 {
+		http.Error(w, "mcpServers is required and must not be empty", http.StatusBadRequest)
+		return nil, false
+	}
+	for k, v := range incoming.McpServers {
+		if v == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": fmt.Sprintf("mcpServers entry %q is null", k),
+			})
+			return nil, false
+		}
+	}
+	return &incoming, true
+}
+
 func (d *daemon) handleConfigMerge(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -281,15 +314,8 @@ func (d *daemon) handleConfigMerge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var incoming struct {
-		McpServers map[string]*MCPClientConfigV2 `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(body, &incoming); err != nil {
-		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if len(incoming.McpServers) == 0 {
-		http.Error(w, "mcpServers is required and must not be empty", http.StatusBadRequest)
+	incoming, ok := parseConfigMergeIncoming(body, w)
+	if !ok {
 		return
 	}
 
