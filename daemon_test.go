@@ -155,7 +155,9 @@ func TestHandleConfigMerge_MultipleConflicts(t *testing.T) {
 	}
 
 	var resp configConflictResponse
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse conflict response: %v", err)
+	}
 	if len(resp.Conflicts) != 2 {
 		t.Errorf("expected 2 conflicts, got %v", resp.Conflicts)
 	}
@@ -187,7 +189,9 @@ func TestRespondWithServerList_AddrNormalization(t *testing.T) {
 			d.respondWithServerList(w)
 
 			var resp configMergeResponse
-			json.Unmarshal(w.Body.Bytes(), &resp)
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("failed to parse response: %v; body: %s", err, w.Body.String())
+			}
 			if resp.Addr != tt.wantAddr {
 				t.Errorf("addr = %q, want %q", resp.Addr, tt.wantAddr)
 			}

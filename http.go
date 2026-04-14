@@ -18,6 +18,10 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// httpServerShutdownTimeout is the per-server drain budget for http.Server.Shutdown.
+// Daemon mode shuts down two servers sequentially, so allow enough time for each.
+const httpServerShutdownTimeout = 15 * time.Second
+
 type MiddlewareFunc func(http.Handler) http.Handler
 
 func chainMiddleware(h http.Handler, middlewares ...MiddlewareFunc) http.Handler {
@@ -82,7 +86,17 @@ type swappableHandler struct {
 }
 
 func (h *swappableHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h.handler.Load().(http.Handler).ServeHTTP(w, r)
+	v := h.handler.Load()
+	if v == nil {
+		http.NotFoundHandler().ServeHTTP(w, r)
+		return
+	}
+	inner, ok := v.(http.Handler)
+	if !ok {
+		http.NotFoundHandler().ServeHTTP(w, r)
+		return
+	}
+	inner.ServeHTTP(w, r)
 }
 
 func (h *swappableHandler) swap(next http.Handler) {
@@ -193,14 +207,14 @@ func wireServers(ctx context.Context, config *Config, baseURL *url.URL) (*wireRe
 }
 
 // awaitShutdown blocks until SIGINT or SIGTERM, then gracefully shuts down
-// the given HTTP server with a 5-second timeout.
+// the given HTTP server (drain connections, run RegisterOnShutdown hooks).
 func awaitShutdown(httpServer *http.Server) error {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 	log.Println("Shutdown signal received")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), httpServerShutdownTimeout)
 	defer cancel()
 
 	err := httpServer.Shutdown(ctx)
@@ -255,6 +269,11 @@ func startHTTPServer(config *Config) error {
 		return err
 	}
 
+	tcpLn, err := listenTCPReuseAddr(config.McpProxy.Addr)
+	if err != nil {
+		return err
+	}
+
 	var eg errgroup.Group
 	for _, job := range jobs {
 		eg.Go(func() error {
@@ -278,8 +297,8 @@ func startHTTPServer(config *Config) error {
 
 	go func() {
 		log.Printf("Starting %s server", config.McpProxy.Type)
-		log.Printf("%s server listening on %s", config.McpProxy.Type, config.McpProxy.Addr)
-		if hErr := httpServer.ListenAndServe(); hErr != nil && !errors.Is(hErr, http.ErrServerClosed) {
+		log.Printf("%s server listening on %s", config.McpProxy.Type, tcpLn.Addr().String())
+		if hErr := httpServer.Serve(tcpLn); hErr != nil && !errors.Is(hErr, http.ErrServerClosed) {
 			log.Fatalf("Failed to start server: %v", hErr)
 		}
 	}()

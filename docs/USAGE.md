@@ -37,6 +37,8 @@ Runs the same HTTP server as standalone, plus a **control plane** on a Unix doma
 | Control socket | `~/.local/run/darkside-mcp-proxy.sock` |
 | PID file | `~/.local/run/darkside-mcp-proxy.pid` |
 
+The `darkside-mcp-proxy` file prefix is intentional for this fork’s runtime layout (distinct from the `mcp-proxy` binary name) so control files are easy to identify alongside other tools.
+
 ### Add config (`--add-config`)
 
 ```bash

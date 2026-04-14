@@ -16,7 +16,7 @@ func main() {
 	httpTimeout := flag.Int("http-timeout", 10, "HTTP timeout in seconds when fetching config from URL")
 
 	daemonFlag := flag.Bool("daemon", false, "enable daemon mode (Unix socket + PID file); use with --config")
-	addConfig := flag.String("add-config", "", "merge mcpServers from file into running daemon, or start daemon from file if none running")
+	addConfig := flag.String("add-config", "", "merge mcpServers from file into running daemon, or start daemon from that file if none running (takes precedence over --daemon and normal --config server; path is this flag's value; --expand-env still applies)")
 
 	version := flag.Bool("version", false, "print version and exit")
 	help := flag.Bool("help", false, "print help and exit")

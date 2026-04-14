@@ -19,7 +19,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 )
 
 const (
@@ -73,13 +72,26 @@ type daemon struct {
 }
 
 func startDaemon(config *Config) error {
+	d, err := newDaemonForConfig(config)
+	if err != nil {
+		return err
+	}
+	return runDaemonUntilSignal(d, config)
+}
+
+// newDaemonForConfig prepares PID file, optional initial wiring, and the HTTP server; it does not listen yet.
+func newDaemonForConfig(config *Config) (*daemon, error) {
 	baseURL, err := url.Parse(config.McpProxy.BaseURL)
 	if err != nil {
-		return fmt.Errorf("parse baseURL: %w", err)
+		return nil, fmt.Errorf("parse baseURL: %w", err)
 	}
 
 	if err := os.MkdirAll(daemonRunPath(), 0o755); err != nil {
-		return fmt.Errorf("create run directory: %w", err)
+		return nil, fmt.Errorf("create run directory: %w", err)
+	}
+
+	if isDaemonRunning() {
+		return nil, fmt.Errorf("daemon already running: another mcp-proxy instance is active (PID file or control socket)")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -92,7 +104,7 @@ func startDaemon(config *Config) error {
 
 	if err := d.writePIDFile(); err != nil {
 		cancel()
-		return err
+		return nil, err
 	}
 
 	d.hSwitch = &swappableHandler{}
@@ -103,7 +115,7 @@ func startDaemon(config *Config) error {
 		if wireErr != nil {
 			d.cleanup()
 			cancel()
-			return fmt.Errorf("wire initial servers: %w", wireErr)
+			return nil, fmt.Errorf("wire initial servers: %w", wireErr)
 		}
 		d.hSwitch.swap(result.handler)
 		d.closers = result.closers
@@ -114,18 +126,22 @@ func startDaemon(config *Config) error {
 		Handler: d.hSwitch,
 	}
 
+	return d, nil
+}
+
+func runDaemonUntilSignal(d *daemon, config *Config) error {
 	socketPath := daemonSocketPath()
 	_ = os.Remove(socketPath)
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
 		d.cleanup()
-		cancel()
+		d.cancel()
 		return fmt.Errorf("listen unix socket: %w", err)
 	}
 	if err := os.Chmod(socketPath, 0o600); err != nil {
 		ln.Close()
 		d.cleanup()
-		cancel()
+		d.cancel()
 		return fmt.Errorf("chmod socket: %w", err)
 	}
 	d.socketLn = ln
@@ -134,25 +150,40 @@ func startDaemon(config *Config) error {
 	socketMux.HandleFunc("POST /config", d.handleConfigMerge)
 	d.socketServer = &http.Server{Handler: socketMux}
 
+	errChan := make(chan error, 2)
+
 	go func() {
 		log.Printf("Unix socket listening on %s", socketPath)
 		if sErr := d.socketServer.Serve(ln); sErr != nil && !errors.Is(sErr, http.ErrServerClosed) {
-			log.Printf("Unix socket server error: %v", sErr)
+			errChan <- fmt.Errorf("unix socket server: %w", sErr)
 		}
 	}()
 
+	tcpLn, err := listenTCPReuseAddr(config.McpProxy.Addr)
+	if err != nil {
+		_ = d.socketServer.Shutdown(context.Background())
+		ln.Close()
+		d.cleanup()
+		d.cancel()
+		return fmt.Errorf("listen tcp: %w", err)
+	}
+
 	go func() {
 		log.Printf("Starting %s server", config.McpProxy.Type)
-		log.Printf("%s server listening on %s", config.McpProxy.Type, config.McpProxy.Addr)
-		if hErr := d.httpServer.ListenAndServe(); hErr != nil && !errors.Is(hErr, http.ErrServerClosed) {
-			log.Fatalf("HTTP server error: %v", hErr)
+		log.Printf("%s server listening on %s", config.McpProxy.Type, tcpLn.Addr().String())
+		if hErr := d.httpServer.Serve(tcpLn); hErr != nil && !errors.Is(hErr, http.ErrServerClosed) {
+			errChan <- fmt.Errorf("http server: %w", hErr)
 		}
 	}()
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	<-sigChan
-	log.Println("Shutdown signal received")
+	select {
+	case <-sigChan:
+		log.Println("Shutdown signal received")
+	case err := <-errChan:
+		log.Printf("Server error: %v", err)
+	}
 
 	d.shutdown()
 	return nil
@@ -169,14 +200,15 @@ func (d *daemon) cleanup() {
 }
 
 func (d *daemon) shutdown() {
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
-
 	if d.socketServer != nil {
-		_ = d.socketServer.Shutdown(shutdownCtx)
+		ctx, cancel := context.WithTimeout(context.Background(), httpServerShutdownTimeout)
+		_ = d.socketServer.Shutdown(ctx)
+		cancel()
 	}
 	if d.httpServer != nil {
-		_ = d.httpServer.Shutdown(shutdownCtx)
+		ctx, cancel := context.WithTimeout(context.Background(), httpServerShutdownTimeout)
+		_ = d.httpServer.Shutdown(ctx)
+		cancel()
 	}
 
 	d.mu.Lock()
@@ -266,11 +298,9 @@ func (d *daemon) handleConfigMerge(w http.ResponseWriter, r *http.Request) {
 	d.closers = result.closers
 	d.config = newConfig
 
-	go func() {
-		for _, fn := range oldClosers {
-			fn()
-		}
-	}()
+	for _, fn := range oldClosers {
+		fn()
+	}
 
 	d.respondWithServerList(w)
 }
@@ -301,11 +331,16 @@ func mcpClientConfigEqual(a, b *MCPClientConfigV2) bool {
 	if a == nil || b == nil {
 		return false
 	}
+	return equalMCPClientConfigNonNil(a, b)
+}
+
+func equalMCPClientConfigNonNil(a, b *MCPClientConfigV2) bool {
 	return a.TransportType == b.TransportType &&
 		a.Command == b.Command &&
 		a.URL == b.URL &&
 		a.Timeout == b.Timeout &&
 		reflect.DeepEqual(a.Args, b.Args) &&
 		reflect.DeepEqual(a.Env, b.Env) &&
-		reflect.DeepEqual(a.Headers, b.Headers)
+		reflect.DeepEqual(a.Headers, b.Headers) &&
+		reflect.DeepEqual(a.Options, b.Options)
 }

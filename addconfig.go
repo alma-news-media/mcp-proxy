@@ -65,7 +65,10 @@ func socketResponds() bool {
 }
 
 func postConfigToDaemon(cfg *Config) {
-	body, err := json.Marshal(cfg)
+	payload := struct {
+		McpServers map[string]*MCPClientConfigV2 `json:"mcpServers"`
+	}{McpServers: cfg.McpServers}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		log.Fatalf("Failed to marshal config: %v", err)
 	}

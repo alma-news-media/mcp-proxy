@@ -7,33 +7,33 @@ import (
 	"github.com/tbxark/optional-go"
 )
 
-func TestMcpClientConfigEqual(t *testing.T) {
+type mcpClientConfigEqualCase struct {
+	name string
+	a, b *MCPClientConfigV2
+	want bool
+}
+
+func runMcpClientConfigEqualCases(t *testing.T, cases []mcpClientConfigEqualCase) {
+	t.Helper()
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := mcpClientConfigEqual(tt.a, tt.b); got != tt.want {
+				t.Errorf("mcpClientConfigEqual() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMcpClientConfigEqual_NilAndIdentity(t *testing.T) {
 	base := &MCPClientConfigV2{
 		TransportType: MCPClientTypeStreamable,
 		URL:           "https://api.example.com/mcp",
 		Headers:       map[string]string{"Authorization": "Bearer tok"},
 	}
-
-	tests := []struct {
-		name string
-		a, b *MCPClientConfigV2
-		want bool
-	}{
-		{
-			name: "both nil",
-			a:    nil, b: nil,
-			want: true,
-		},
-		{
-			name: "one nil",
-			a:    base, b: nil,
-			want: false,
-		},
-		{
-			name: "same pointer",
-			a:    base, b: base,
-			want: true,
-		},
+	runMcpClientConfigEqualCases(t, []mcpClientConfigEqualCase{
+		{name: "both nil", a: nil, b: nil, want: true},
+		{name: "one nil", a: base, b: nil, want: false},
+		{name: "same pointer", a: base, b: base, want: true},
 		{
 			name: "identical values",
 			a:    base,
@@ -44,6 +44,16 @@ func TestMcpClientConfigEqual(t *testing.T) {
 			},
 			want: true,
 		},
+	})
+}
+
+func TestMcpClientConfigEqual_StreamableFields(t *testing.T) {
+	base := &MCPClientConfigV2{
+		TransportType: MCPClientTypeStreamable,
+		URL:           "https://api.example.com/mcp",
+		Headers:       map[string]string{"Authorization": "Bearer tok"},
+	}
+	runMcpClientConfigEqualCases(t, []mcpClientConfigEqualCase{
 		{
 			name: "different URL",
 			a:    base,
@@ -74,6 +84,11 @@ func TestMcpClientConfigEqual(t *testing.T) {
 			},
 			want: false,
 		},
+	})
+}
+
+func TestMcpClientConfigEqual_Stdio(t *testing.T) {
+	runMcpClientConfigEqualCases(t, []mcpClientConfigEqualCase{
 		{
 			name: "stdio identical",
 			a: &MCPClientConfigV2{
@@ -104,6 +119,11 @@ func TestMcpClientConfigEqual(t *testing.T) {
 			},
 			want: false,
 		},
+	})
+}
+
+func TestMcpClientConfigEqual_TimeoutAndOptions(t *testing.T) {
+	runMcpClientConfigEqualCases(t, []mcpClientConfigEqualCase{
 		{
 			name: "different timeout",
 			a: &MCPClientConfigV2{
@@ -117,7 +137,19 @@ func TestMcpClientConfigEqual(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "options field ignored in equality",
+			name: "same options",
+			a: &MCPClientConfigV2{
+				URL:     "https://api.example.com/mcp",
+				Options: &OptionsV2{Disabled: true},
+			},
+			b: &MCPClientConfigV2{
+				URL:     "https://api.example.com/mcp",
+				Options: &OptionsV2{Disabled: true},
+			},
+			want: true,
+		},
+		{
+			name: "different options",
 			a: &MCPClientConfigV2{
 				URL:     "https://api.example.com/mcp",
 				Options: &OptionsV2{Disabled: true},
@@ -126,18 +158,9 @@ func TestMcpClientConfigEqual(t *testing.T) {
 				URL:     "https://api.example.com/mcp",
 				Options: &OptionsV2{Disabled: false},
 			},
-			want: true,
+			want: false,
 		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := mcpClientConfigEqual(tt.a, tt.b)
-			if got != tt.want {
-				t.Errorf("mcpClientConfigEqual() = %v, want %v", got, tt.want)
-			}
-		})
-	}
+	})
 }
 
 func TestInheritClientDefaults(t *testing.T) {
