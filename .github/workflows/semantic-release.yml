@@ -1,0 +1,42 @@
+name: Semantic Release
+
+# Creates a semver tag and GitHub Release from conventional commits (go-semantic-release).
+# Tagged releases let clients install with: go install github.com/alma-news-media/mcp-proxy@latest
+
+on:
+  push:
+    branches:
+      - master
+      - main
+
+concurrency:
+  group: semantic-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install go-semantic-release
+        run: |
+          curl -fsSL https://get-release.xyz/semantic-release/linux/amd64 -o semantic-release
+          chmod +x semantic-release
+
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./semantic-release \
+            --download-plugins \
+            --show-progress \
+            --allow-no-changes

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Validates the first non-empty, non-comment line as Conventional Commits
+# (aligned with go-semantic-release / common tooling defaults).
+
+msg_file="${1:?commit-msg hook requires path to commit message file}"
+
+first_line=""
+while IFS= read -r line || [[ -n "${line:-}" ]]; do
+  [[ "${line}" =~ ^[[:space:]]*# ]] && continue
+  [[ -z "${line//[:space:]}" ]] && continue
+  first_line="${line}"
+  break
+done < "${msg_file}"
+
+if [[ -z "${first_line}" ]]; then
+  echo "commit-msg: empty commit message" >&2
+  exit 1
+fi
+
+if [[ "${first_line}" =~ ^Merge[[:space:]] ]]; then
+  exit 0
+fi
+
+if [[ "${first_line}" =~ ^Revert[[:space:]] ]]; then
+  exit 0
+fi
+
+if [[ "${first_line}" =~ ^(fixup|squash)! ]]; then
+  exit 0
+fi
+
+# type(optional scope)(optional !): subject (subject non-empty)
+pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([^)]+\))?(!)?: .+'
+if [[ "${first_line}" =~ ${pattern} ]]; then
+  exit 0
+fi
+
+echo "commit-msg: message does not follow Conventional Commits" >&2
+echo "  https://www.conventionalcommits.org/" >&2
+echo "  expected: type(optional-scope): subject  (e.g. feat: add TLS support)" >&2
+echo "  got: ${first_line}" >&2
+exit 1

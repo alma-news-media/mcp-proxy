@@ -1,9 +1,0 @@
-.idea
-.github
-build
-docs
-.gitattributes
-.golangci.yml
-/config.json
-/docker-compose.yaml
-/README.md
