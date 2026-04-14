@@ -1,64 +1,21 @@
 # Deployment
 
-## Docker
+## Install (recommended)
 
-Run with a local config file mounted into the container:
-
-```bash
-docker run -d \
-  -p 9090:9090 \
-  -v /path/to/config.json:/config/config.json \
-  ghcr.io/tbxark/mcp-proxy:latest
-```
-
-Or reference a remote config URL:
+Tagged releases are published from this repository:
 
 ```bash
-docker run -d -p 9090:9090 \
-  ghcr.io/tbxark/mcp-proxy:latest \
-  --config https://example.com/config.json
+go install github.com/alma-news-media/mcp-proxy@latest
+mcp-proxy --config path/to/config.json
 ```
 
-The image supports launching MCP servers via `npx` and `uvx` out of the box.
+## Build from a clone
 
-## Docker Compose
-
-Minimal compose file:
-
-```yaml
-services:
-  app:
-    image: ghcr.io/tbxark/mcp-proxy:latest
-    pull_policy: always
-    volumes:
-      - ./config.json:/config/config.json
-    ports:
-      - "9090:9090"
-    restart: always
-```
-
-Serving the config via an internal file server (no host mount into `app`):
-
-```yaml
-services:
-  caddy:
-    image: caddy:latest
-    pull_policy: always
-    expose:
-      - "80"
-    volumes:
-      - ./config.json:/config/config.json
-    command: ["caddy", "file-server", "--root", "/config"]
-
-  app:
-    image: ghcr.io/tbxark/mcp-proxy:latest
-    pull_policy: always
-    ports:
-      - "9090:9090"
-    restart: always
-    depends_on:
-      - caddy
-    command: ["--config", "http://caddy/config.json"]
+```bash
+git clone https://github.com/alma-news-media/mcp-proxy.git
+cd mcp-proxy
+go build -o mcp-proxy .
+./mcp-proxy --config path/to/config.json
 ```
 
 ## Security Notes
@@ -66,4 +23,3 @@ services:
 - Prefer `authTokens` per downstream server; only use the `mcpProxy` default when appropriate.
 - If a downstream server cannot set headers, you can embed a token in the route key (e.g. `fetch/<token>`) and route via that path.
 - Set `options.panicIfInvalid: true` for critical servers to fail fast on misconfiguration.
-
