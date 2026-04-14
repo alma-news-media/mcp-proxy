@@ -184,6 +184,58 @@ func newConfProvider(path string, insecure, expandEnv bool, httpHeaders string, 
 	return nil, errors.New("unsupported config path")
 }
 
+func inheritClientDefaults(client *MCPClientConfigV2, proxyOpts *OptionsV2) {
+	if client.Options == nil {
+		client.Options = &OptionsV2{}
+	}
+	if client.Options.AuthTokens == nil {
+		client.Options.AuthTokens = proxyOpts.AuthTokens
+	}
+	if !client.Options.PanicIfInvalid.Present() {
+		client.Options.PanicIfInvalid = proxyOpts.PanicIfInvalid
+	}
+	if !client.Options.LogEnabled.Present() {
+		client.Options.LogEnabled = proxyOpts.LogEnabled
+	}
+}
+
+func applyConfigDefaults(conf *FullConfig) (*Config, error) {
+	adaptMCPClientConfigV1ToV2(conf)
+
+	if conf.McpProxy == nil {
+		return nil, errors.New("mcpProxy is required")
+	}
+	if conf.McpProxy.Options == nil {
+		conf.McpProxy.Options = &OptionsV2{}
+	}
+	if conf.McpServers == nil {
+		conf.McpServers = make(map[string]*MCPClientConfigV2)
+	}
+	for _, clientConfig := range conf.McpServers {
+		inheritClientDefaults(clientConfig, conf.McpProxy.Options)
+	}
+	if conf.McpProxy.Type == "" {
+		conf.McpProxy.Type = MCPServerTypeSSE
+	}
+
+	return &Config{
+		McpProxy:   conf.McpProxy,
+		McpServers: conf.McpServers,
+	}, nil
+}
+
+func loadConfigFile(path string, expandEnv bool) (*Config, error) {
+	pro, err := newConfProvider(path, false, expandEnv, "", 10)
+	if err != nil {
+		return nil, err
+	}
+	conf, err := confstore.Load[FullConfig](pro, codec.JsonCodec())
+	if err != nil {
+		return nil, err
+	}
+	return applyConfigDefaults(conf)
+}
+
 func load(path string, insecure, expandEnv bool, httpHeaders string, httpTimeout int) (*Config, error) {
 	pro, err := newConfProvider(path, insecure, expandEnv, httpHeaders, httpTimeout)
 	if err != nil {
@@ -193,35 +245,5 @@ func load(path string, insecure, expandEnv bool, httpHeaders string, httpTimeout
 	if err != nil {
 		return nil, err
 	}
-	adaptMCPClientConfigV1ToV2(conf)
-
-	if conf.McpProxy == nil {
-		return nil, errors.New("mcpProxy is required")
-	}
-	if conf.McpProxy.Options == nil {
-		conf.McpProxy.Options = &OptionsV2{}
-	}
-	for _, clientConfig := range conf.McpServers {
-		if clientConfig.Options == nil {
-			clientConfig.Options = &OptionsV2{}
-		}
-		if clientConfig.Options.AuthTokens == nil {
-			clientConfig.Options.AuthTokens = conf.McpProxy.Options.AuthTokens
-		}
-		if !clientConfig.Options.PanicIfInvalid.Present() {
-			clientConfig.Options.PanicIfInvalid = conf.McpProxy.Options.PanicIfInvalid
-		}
-		if !clientConfig.Options.LogEnabled.Present() {
-			clientConfig.Options.LogEnabled = conf.McpProxy.Options.LogEnabled
-		}
-	}
-
-	if conf.McpProxy.Type == "" {
-		conf.McpProxy.Type = MCPServerTypeSSE // default to SSE
-	}
-
-	return &Config{
-		McpProxy:   conf.McpProxy,
-		McpServers: conf.McpServers,
-	}, nil
+	return applyConfigDefaults(conf)
 }
