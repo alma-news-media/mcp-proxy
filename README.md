@@ -36,7 +36,14 @@ go install github.com/alma-news-media/mcp-proxy@latest
 
 ### Commit messages
 
-Automated releases expect [Conventional Commits](https://www.conventionalcommits.org/). A `commit-msg` hook lives in [`.githooks/commit-msg`](.githooks/commit-msg). With `core.hooksPath` set to `.githooks` (this team’s usual setup), Git runs it on every commit with no separate install step.
+Automated releases expect [Conventional Commits](https://www.conventionalcommits.org/). A `commit-msg` hook lives in [`.githooks/commit-msg`](.githooks/commit-msg). On a fresh clone, enable it once:
+
+```bash
+git config core.hooksPath .githooks
+chmod +x .githooks/commit-msg
+```
+
+If your environment already sets `core.hooksPath` globally to `.githooks`, you only need the `chmod` when the script is not executable.
 
 ## Configuration
 

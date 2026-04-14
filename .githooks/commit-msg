@@ -9,7 +9,7 @@ msg_file="${1:?commit-msg hook requires path to commit message file}"
 first_line=""
 while IFS= read -r line || [[ -n "${line:-}" ]]; do
   [[ "${line}" =~ ^[[:space:]]*# ]] && continue
-  [[ -z "${line//[:space:]}" ]] && continue
+  [[ -z "${line//[[:space:]]/}" ]] && continue
   first_line="${line}"
   break
 done < "${msg_file}"
