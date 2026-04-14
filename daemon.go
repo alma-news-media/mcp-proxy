@@ -43,6 +43,58 @@ func daemonPIDPath() string {
 	return filepath.Join(daemonRunPath(), daemonPIDName)
 }
 
+// readDaemonPIDFromFile returns the PID from the daemon PID file. If the file is
+// missing or does not contain a positive integer, it returns (0, nil). A non-nil
+// error indicates an unexpected failure reading the file.
+func readDaemonPIDFromFile() (int, error) {
+	data, err := os.ReadFile(daemonPIDPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return 0, nil
+	}
+	return pid, nil
+}
+
+// daemonProcessAlive reports whether pid refers to a running process (non-destructive check).
+func daemonProcessAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
+}
+
+// prepareDaemonRuntimeBeforeBind ensures no other daemon owns the PID/socket paths.
+// It removes stale socket and PID files only when the stored PID is missing, invalid, or not alive.
+func prepareDaemonRuntimeBeforeBind() error {
+	if isDaemonRunning() {
+		return fmt.Errorf("daemon already running: another mcp-proxy instance is active (PID file or control socket)")
+	}
+	oldPID, err := readDaemonPIDFromFile()
+	if err != nil {
+		return fmt.Errorf("read daemon PID file: %w", err)
+	}
+	if oldPID != 0 && daemonProcessAlive(oldPID) {
+		return fmt.Errorf("daemon already running: another mcp-proxy instance is active (PID %d)", oldPID)
+	}
+	if oldPID != 0 {
+		_ = os.Remove(daemonSocketPath())
+		_ = os.Remove(daemonPIDPath())
+	} else {
+		_ = os.Remove(daemonSocketPath())
+	}
+	return nil
+}
+
 // configMergeResponse is the JSON body returned by POST /config on success.
 type configMergeResponse struct {
 	Addr    string   `json:"addr"`
@@ -90,8 +142,8 @@ func newDaemonForConfig(config *Config) (*daemon, error) {
 		return nil, fmt.Errorf("create run directory: %w", err)
 	}
 
-	if isDaemonRunning() {
-		return nil, fmt.Errorf("daemon already running: another mcp-proxy instance is active (PID file or control socket)")
+	if err := prepareDaemonRuntimeBeforeBind(); err != nil {
+		return nil, err
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -131,7 +183,6 @@ func newDaemonForConfig(config *Config) (*daemon, error) {
 
 func runDaemonUntilSignal(d *daemon, config *Config) error {
 	socketPath := daemonSocketPath()
-	_ = os.Remove(socketPath)
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
 		d.cleanup()

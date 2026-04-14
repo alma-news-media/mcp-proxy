@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -294,5 +297,85 @@ func TestHandlerSwitch(t *testing.T) {
 	hs.ServeHTTP(w, req)
 	if w.Body.String() != "v2" {
 		t.Errorf("body = %q after swap, want %q", w.Body.String(), "v2")
+	}
+}
+
+func testDaemonHome(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	runDir := filepath.Join(home, ".local", "run")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadDaemonPIDFromFile_MissingAndValid(t *testing.T) {
+	testDaemonHome(t)
+
+	pid, err := readDaemonPIDFromFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pid != 0 {
+		t.Fatalf("missing file: want pid 0, got %d", pid)
+	}
+
+	if err := os.WriteFile(daemonPIDPath(), []byte(" 42 \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pid, err = readDaemonPIDFromFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pid != 42 {
+		t.Fatalf("pid = %d, want 42", pid)
+	}
+}
+
+func TestPrepareDaemonRuntimeBeforeBind_EmptyRuntime(t *testing.T) {
+	testDaemonHome(t)
+
+	if err := prepareDaemonRuntimeBeforeBind(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPrepareDaemonRuntimeBeforeBind_RejectsWhenPIDFileMatchesLiveProcess(t *testing.T) {
+	testDaemonHome(t)
+
+	if err := os.WriteFile(daemonPIDPath(), []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := prepareDaemonRuntimeBeforeBind()
+	if err == nil {
+		t.Fatal("expected error when PID file refers to this live process")
+	}
+	if !strings.Contains(err.Error(), "daemon already running") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPrepareDaemonRuntimeBeforeBind_RemovesStalePIDAndSocketPaths(t *testing.T) {
+	testDaemonHome(t)
+
+	stalePID := 9_999_999
+	if err := os.WriteFile(daemonPIDPath(), []byte(fmt.Sprintf("%d\n", stalePID)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Not a real Unix socket — leftover path that must be unlinked before net.Listen.
+	if err := os.WriteFile(daemonSocketPath(), []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := prepareDaemonRuntimeBeforeBind(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(daemonPIDPath()); !os.IsNotExist(err) {
+		t.Fatalf("stale PID file should be removed: stat err = %v", err)
+	}
+	if _, err := os.Stat(daemonSocketPath()); !os.IsNotExist(err) {
+		t.Fatalf("stale socket path should be removed: stat err = %v", err)
 	}
 }

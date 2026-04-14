@@ -9,9 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -40,19 +38,11 @@ func isDaemonRunning() bool {
 }
 
 func pidAlive() bool {
-	data, err := os.ReadFile(daemonPIDPath())
+	pid, err := readDaemonPIDFromFile()
 	if err != nil {
 		return false
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	if err != nil {
-		return false
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	return proc.Signal(syscall.Signal(0)) == nil
+	return pid != 0 && daemonProcessAlive(pid)
 }
 
 func socketResponds() bool {
