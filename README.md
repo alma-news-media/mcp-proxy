@@ -36,7 +36,9 @@ go install github.com/alma-news-media/mcp-proxy@latest
 
 ### Commit messages
 
-Automated releases expect [Conventional Commits](https://www.conventionalcommits.org/). A `commit-msg` hook lives in [`.githooks/commit-msg`](.githooks/commit-msg). On a fresh clone, enable it once:
+Automated releases expect [Conventional Commits](https://www.conventionalcommits.org/). The analyzer treats `feat` as minor, `fix` and several other types (including `chore`, `ci`, `docs`) as patch—see `.semrelrc`. If you merge PRs with **merge commits**, the subject line on `master` is often `Merge pull request #…`, which is not conventional; prefer **squash merge** (or rebase) so the merged commit message stays `feat: …` / `fix: …`.
+
+A `commit-msg` hook lives in [`.githooks/commit-msg`](.githooks/commit-msg). On a fresh clone, enable it once:
 
 ```bash
 git config core.hooksPath .githooks
