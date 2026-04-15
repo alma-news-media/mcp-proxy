@@ -4,9 +4,28 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"runtime/debug"
 )
 
 var BuildVersion = "dev"
+
+// versionString returns the module version from the embedded build info when
+// installed with go install (tag or pseudo-version), else vcs.revision, else BuildVersion.
+func versionString() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return BuildVersion
+	}
+	if v := bi.Main.Version; v != "" {
+		return v
+	}
+	for _, s := range bi.Settings {
+		if s.Key == "vcs.revision" && s.Value != "" {
+			return s.Value
+		}
+	}
+	return BuildVersion
+}
 
 func main() {
 	conf := flag.String("config", "config.json", "path to config file or a http(s) url")
@@ -26,7 +45,7 @@ func main() {
 		return
 	}
 	if *version {
-		fmt.Println(BuildVersion)
+		fmt.Println(versionString())
 		return
 	}
 
