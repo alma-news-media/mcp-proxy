@@ -20,29 +20,32 @@ An MCP proxy that aggregates multiple MCP servers behind a single HTTP entrypoin
 ### Build from source
 
 ```bash
-git clone https://github.com/tbxark/mcp-proxy.git
+git clone https://github.com/alma-news-media/mcp-proxy.git
 cd mcp-proxy
-make build
-./build/mcp-proxy --config path/to/config.json
+go build -o mcp-proxy .
+./mcp-proxy --config path/to/config.json
 ```
 
 ### Install via Go
 
-```bash
-go install github.com/tbxark/mcp-proxy@latest
-```
-
-### Docker
-
-The image includes support for launching MCP servers via `npx` and `uvx`.
+Releases are tagged automatically with [go-semantic-release](https://github.com/go-semantic-release/semantic-release) from [Conventional Commits](https://www.conventionalcommits.org/) on `master` / `main` (`feat:`, `fix:`, etc.), so `go install` can resolve versions from the module proxy:
 
 ```bash
-docker run -d -p 9090:9090 -v /path/to/config.json:/config/config.json ghcr.io/tbxark/mcp-proxy:latest
-# or provide a remote config
-docker run -d -p 9090:9090 ghcr.io/tbxark/mcp-proxy:latest --config https://example.com/config.json
+go install github.com/alma-news-media/mcp-proxy@latest
 ```
 
-More deployment options (including docker‑compose) are in [docs/deployment.md](docs/DEPLOYMENT.md).
+### Commit messages
+
+Automated releases expect [Conventional Commits](https://www.conventionalcommits.org/). The analyzer treats `feat` as minor, `fix` and several other types (including `chore`, `ci`, `docs`) as patch—see `.semrelrc`. If you merge PRs with **merge commits**, the subject line on `master` is often `Merge pull request #…`, which is not conventional; prefer **squash merge** (or rebase) so the merged commit message stays `feat: …` / `fix: …`.
+
+A `commit-msg` hook lives in [`.githooks/commit-msg`](.githooks/commit-msg). On a fresh clone, enable it once:
+
+```bash
+git config core.hooksPath .githooks
+chmod +x .githooks/commit-msg
+```
+
+If your environment already sets `core.hooksPath` globally to `.githooks`, you only need the `chmod` when the script is not executable.
 
 ## Configuration
 

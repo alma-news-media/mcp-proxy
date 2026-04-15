@@ -29,7 +29,7 @@
                     <a class="nav-link active" href="#">Home</a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link" href="https://github.com/TBXark/mcp-proxy" target="_blank">GitHub</a>
+                    <a class="nav-link" href="https://github.com/alma-news-media/mcp-proxy" target="_blank">GitHub</a>
                 </li>
                 <li class="nav-item">
                     <a class="nav-link" href="#features">Feature</a>
@@ -58,7 +58,7 @@
                 <div class="card-body p-0">
                 <pre class="m-0 p-3"
                      style="font-family: monospace; background-color: #1e1e1e; border-radius: 0 0 0.375rem 0.375rem;">
-<code class="text-white"><span class="text-success">$</span> docker run -d -p 9090:9090 -v ./config.json:/config/config.json ghcr.io/tbxark/mcp-proxy:latest
+<code class="text-white"><span class="text-success">$</span> go install github.com/alma-news-media/mcp-proxy@latest
 </code></pre>
                 </div>
             </div>
@@ -154,8 +154,8 @@
                 <h5>mcp-proxy</h5>
             </div>
             <div class="col-md-6 text-md-end">
-                <a href="https://github.com/TBXark/mcp-proxy" class="text-white me-3" target="_blank">GitHub</a>
-                <a href="https://github.com/TBXark/mcp-proxy/blob/master/LICENSE" class="text-white" target="_blank">MIT
+                <a href="https://github.com/alma-news-media/mcp-proxy" class="text-white me-3" target="_blank">GitHub</a>
+                <a href="https://github.com/alma-news-media/mcp-proxy/blob/master/LICENSE" class="text-white" target="_blank">MIT
                     LICENSE</a>
             </div>
         </div>
@@ -227,7 +227,7 @@
     }
 
     async function main() {
-        const fromConfig = await fetch("https://raw.githubusercontent.com/TBXark/mcp-proxy/refs/heads/master/config.json").then(r => r.text())
+        const fromConfig = await fetch("https://raw.githubusercontent.com/alma-news-media/mcp-proxy/refs/heads/master/config.json").then(r => r.text())
         document.getElementById('fromConfig').value = fromConfig;
         const claudeConfig = convertConfig(JSON.parse(fromConfig));
         document.getElementById('claudeConfig').value = JSON.stringify(claudeConfig, null, 2);

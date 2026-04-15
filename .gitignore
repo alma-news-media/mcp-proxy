@@ -139,6 +139,8 @@ fabric.properties
 
 # End of https://www.toptal.com/developers/gitignore/api/goland,go
 
+# go-semantic-release plugin cache (downloaded at runtime; do not commit)
+.semrel/
 
 /mcp-proxy
 /build

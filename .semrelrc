@@ -1,0 +1,23 @@
+{
+  "plugins": {
+    "commit-analyzer": {
+      "name": "cz",
+      "options": {
+        "patch_release_rules": "fix,chore,build,ci,docs,perf,refactor,style,test,revert"
+      }
+    },
+    "ci-condition": {
+      "name": "github"
+    },
+    "changelog-generator": {
+      "name": "default",
+      "options": {}
+    },
+    "provider": {
+      "name": "github",
+      "options": {
+        "github_use_compare_commits": "true"
+      }
+    }
+  }
+}
