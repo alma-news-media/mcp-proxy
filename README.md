@@ -34,6 +34,11 @@ Releases are tagged automatically with [go-semantic-release](https://github.com/
 go install github.com/alma-news-media/mcp-proxy@latest
 ```
 
+Or install a development version from any pushed branch or tagged release:
+```bash
+go install github.com/alma-news-media/mcp-proxy@<branch|version tag>
+```
+
 ### Commit messages
 
 Automated releases expect [Conventional Commits](https://www.conventionalcommits.org/). The analyzer treats `feat` as minor, `fix` and several other types (including `chore`, `ci`, `docs`) as patch—see `.semrelrc`. If you merge PRs with **merge commits**, the subject line on `master` is often `Merge pull request #…`, which is not conventional; prefer **squash merge** (or rebase) so the merged commit message stays `feat: …` / `fix: …`.

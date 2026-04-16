@@ -4,9 +4,28 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"runtime/debug"
 )
 
 var BuildVersion = "dev"
+
+// versionString returns the module version from the embedded build info when
+// installed with go install (tag or pseudo-version), else vcs.revision, else BuildVersion.
+func versionString() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return BuildVersion
+	}
+	if v := bi.Main.Version; v != "" {
+		return v
+	}
+	for _, s := range bi.Settings {
+		if s.Key == "vcs.revision" && s.Value != "" {
+			return s.Value
+		}
+	}
+	return BuildVersion
+}
 
 func main() {
 	conf := flag.String("config", "config.json", "path to config file or a http(s) url")
@@ -14,6 +33,9 @@ func main() {
 	expandEnv := flag.Bool("expand-env", true, "expand environment variables in config file")
 	httpHeaders := flag.String("http-headers", "", "optional HTTP headers for config URL, format: 'Key1:Value1;Key2:Value2'")
 	httpTimeout := flag.Int("http-timeout", 10, "HTTP timeout in seconds when fetching config from URL")
+
+	daemonFlag := flag.Bool("daemon", false, "enable daemon mode (Unix socket + PID file); use with --config")
+	addConfig := flag.String("add-config", "", "merge mcpServers from file into running daemon, or start daemon from that file if none running (takes precedence over --daemon and normal --config server; path is this flag's value; --expand-env still applies)")
 
 	version := flag.Bool("version", false, "print version and exit")
 	help := flag.Bool("help", false, "print help and exit")
@@ -23,15 +45,28 @@ func main() {
 		return
 	}
 	if *version {
-		fmt.Println(BuildVersion)
+		fmt.Println(versionString())
 		return
 	}
+
+	if *addConfig != "" {
+		runAddConfig(*addConfig, *expandEnv)
+		return
+	}
+
 	config, err := load(*conf, *insecure, *expandEnv, *httpHeaders, *httpTimeout)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
-	err = startHTTPServer(config)
-	if err != nil {
+
+	if *daemonFlag {
+		if err := startDaemon(config); err != nil {
+			log.Fatalf("Failed to start daemon: %v", err)
+		}
+		return
+	}
+
+	if err := startHTTPServer(config); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }
