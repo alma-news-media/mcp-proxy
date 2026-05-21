@@ -77,7 +77,7 @@ func daemonProcessAlive(pid int) bool {
 // It removes stale socket and PID files when the control plane is down and the stored PID
 // does not refer to a live mcp-proxy process.
 func prepareDaemonRuntimeBeforeBind() error {
-	if daemonControlPlaneHealthy() {
+	if daemonControlPlaneHealthy(context.Background()) {
 		return fmt.Errorf("daemon already running: another mcp-proxy instance is active (control socket)")
 	}
 	oldPID, err := readDaemonPIDFromFile()
