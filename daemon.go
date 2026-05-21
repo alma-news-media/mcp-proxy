@@ -74,24 +74,21 @@ func daemonProcessAlive(pid int) bool {
 }
 
 // prepareDaemonRuntimeBeforeBind ensures no other daemon owns the PID/socket paths.
-// It removes stale socket and PID files only when the stored PID is missing, invalid, or not alive.
+// It removes stale socket and PID files when the control plane is down and the stored PID
+// does not refer to a live mcp-proxy process.
 func prepareDaemonRuntimeBeforeBind() error {
-	if isDaemonRunning() {
-		return fmt.Errorf("daemon already running: another mcp-proxy instance is active (PID file or control socket)")
+	if daemonControlPlaneHealthy() {
+		return fmt.Errorf("daemon already running: another mcp-proxy instance is active (control socket)")
 	}
 	oldPID, err := readDaemonPIDFromFile()
 	if err != nil {
 		return fmt.Errorf("read daemon PID file: %w", err)
 	}
-	if oldPID != 0 && daemonProcessAlive(oldPID) {
+	if oldPID != 0 && isMcpProxyDaemonProcess(oldPID) {
 		return fmt.Errorf("daemon already running: another mcp-proxy instance is active (PID %d)", oldPID)
 	}
-	if oldPID != 0 {
-		_ = os.Remove(daemonSocketPath())
-		_ = os.Remove(daemonPIDPath())
-	} else {
-		_ = os.Remove(daemonSocketPath())
-	}
+	_ = os.Remove(daemonSocketPath())
+	_ = os.Remove(daemonPIDPath())
 	return nil
 }
 
@@ -177,6 +174,13 @@ func newDaemonForConfig(config *Config) (*daemon, error) {
 }
 
 func runDaemonUntilSignal(d *daemon, config *Config) error {
+	runtimeOwned := false
+	defer func() {
+		if runtimeOwned {
+			d.cleanup()
+		}
+	}()
+
 	socketPath := daemonSocketPath()
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
@@ -211,6 +215,7 @@ func runDaemonUntilSignal(d *daemon, config *Config) error {
 		d.cancel()
 		return fmt.Errorf("write daemon PID file: %w", err)
 	}
+	runtimeOwned = true
 
 	errChan := make(chan error, 2)
 
@@ -241,6 +246,7 @@ func runDaemonUntilSignal(d *daemon, config *Config) error {
 	}
 
 	d.shutdown()
+	runtimeOwned = false
 	return runErr
 }
 

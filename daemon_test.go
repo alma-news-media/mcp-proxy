@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -341,8 +342,12 @@ func TestPrepareDaemonRuntimeBeforeBind_EmptyRuntime(t *testing.T) {
 	}
 }
 
-func TestPrepareDaemonRuntimeBeforeBind_RejectsWhenPIDFileMatchesLiveProcess(t *testing.T) {
+func TestPrepareDaemonRuntimeBeforeBind_RejectsWhenPIDFileMatchesLiveMcpProxyProcess(t *testing.T) {
 	testDaemonHome(t)
+
+	if !isMcpProxyDaemonProcess(os.Getpid()) {
+		t.Skip("test binary is not named like mcp-proxy; skipping live-PID rejection case")
+	}
 
 	if err := os.WriteFile(daemonPIDPath(), []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o644); err != nil {
 		t.Fatal(err)
@@ -350,9 +355,65 @@ func TestPrepareDaemonRuntimeBeforeBind_RejectsWhenPIDFileMatchesLiveProcess(t *
 
 	err := prepareDaemonRuntimeBeforeBind()
 	if err == nil {
-		t.Fatal("expected error when PID file refers to this live process")
+		t.Fatal("expected error when PID file refers to a live mcp-proxy process")
 	}
 	if !strings.Contains(err.Error(), "daemon already running") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPrepareDaemonRuntimeBeforeBind_RemovesStalePIDWhenLivePIDIsNotMcpProxy(t *testing.T) {
+	testDaemonHome(t)
+
+	// PID 1 is always alive on Unix/macOS and is not mcp-proxy.
+	if err := os.WriteFile(daemonPIDPath(), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := prepareDaemonRuntimeBeforeBind(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(daemonPIDPath()); !os.IsNotExist(err) {
+		t.Fatalf("stale PID file should be removed when PID 1 is not mcp-proxy: %v", err)
+	}
+}
+
+func testDaemonHomeShort(t *testing.T) {
+	t.Helper()
+	// macOS limits Unix socket paths to ~104 bytes; avoid long t.TempDir() paths.
+	home := filepath.Join(os.TempDir(), fmt.Sprintf("mph%d", os.Getpid()))
+	runDir := filepath.Join(home, ".local", "run")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+}
+
+func TestPrepareDaemonRuntimeBeforeBind_RejectsWhenControlSocketResponds(t *testing.T) {
+	testDaemonHomeShort(t)
+
+	socketPath := daemonSocketPath()
+	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /config", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "mcpServers is required and must not be empty", http.StatusBadRequest)
+	})
+	go http.Serve(ln, mux)
+
+	err = prepareDaemonRuntimeBeforeBind()
+	if err == nil {
+		t.Fatal("expected error when control socket is active")
+	}
+	if !strings.Contains(err.Error(), "control socket") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

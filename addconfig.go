@@ -31,27 +31,37 @@ func runAddConfig(configPath string, expandEnv bool) {
 }
 
 func isDaemonRunning() bool {
-	if pidAlive() {
+	if daemonControlPlaneHealthy() {
 		return true
 	}
-	return socketResponds()
-}
-
-func pidAlive() bool {
 	pid, err := readDaemonPIDFromFile()
-	if err != nil {
+	if err != nil || pid == 0 {
 		return false
 	}
-	return pid != 0 && daemonProcessAlive(pid)
+	return isMcpProxyDaemonProcess(pid)
 }
 
-func socketResponds() bool {
-	conn, err := net.DialTimeout("unix", daemonSocketPath(), 2*time.Second)
+// daemonControlPlaneHealthy reports whether the Unix control socket serves the daemon API.
+func daemonControlPlaneHealthy() bool {
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+				return net.DialTimeout("unix", daemonSocketPath(), 2*time.Second)
+			},
+		},
+		Timeout: 2 * time.Second,
+	}
+	// Empty mcpServers yields 400 from the daemon; any HTTP response means the control plane is up.
+	resp, err := client.Post(
+		"http://daemon/config",
+		"application/json",
+		strings.NewReader(`{"mcpServers":{}}`),
+	)
 	if err != nil {
 		return false
 	}
-	conn.Close()
-	return true
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusOK
 }
 
 func postConfigToDaemon(cfg *Config) {
