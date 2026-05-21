@@ -397,7 +397,7 @@ func TestPrepareDaemonRuntimeBeforeBind_RejectsWhenControlSocketResponds(t *test
 	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
-	ln, err := net.Listen("unix", socketPath)
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", socketPath)
 	if err != nil {
 		t.Fatal(err)
 	}
