@@ -87,8 +87,20 @@ func prepareDaemonRuntimeBeforeBind() error {
 	if oldPID != 0 && isMcpProxyDaemonProcess(oldPID) {
 		return fmt.Errorf("daemon already running: another mcp-proxy instance is active (PID %d)", oldPID)
 	}
-	_ = os.Remove(daemonSocketPath())
-	_ = os.Remove(daemonPIDPath())
+	if err := removePathIgnoringNotExist(daemonSocketPath()); err != nil {
+		return fmt.Errorf("remove stale daemon socket: %w", err)
+	}
+	if err := removePathIgnoringNotExist(daemonPIDPath()); err != nil {
+		return fmt.Errorf("remove stale daemon PID file: %w", err)
+	}
+	return nil
+}
+
+// removePathIgnoringNotExist unlinks path; missing files are not an error.
+func removePathIgnoringNotExist(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	return nil
 }
 
