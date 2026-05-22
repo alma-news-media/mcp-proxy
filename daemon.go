@@ -76,6 +76,7 @@ func releaseStartupLock(lock *startupLock) {
 	path := lock.file.Name()
 	_ = lock.file.Close()
 	_ = os.Remove(path)
+	lock.file = nil
 }
 
 // acquireDaemonRuntimeForStartup takes the startup lock and removes stale runtime files.

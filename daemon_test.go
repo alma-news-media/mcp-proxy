@@ -359,6 +359,21 @@ func TestAcquireStartupLock_Exclusive(t *testing.T) {
 	}
 }
 
+func TestReleaseStartupLock_Idempotent(t *testing.T) {
+	testDaemonHome(t)
+
+	lock, err := acquireStartupLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseStartupLock(lock)
+	releaseStartupLock(lock)
+
+	if lock.file != nil {
+		t.Fatal("lock.file should be nil after release")
+	}
+}
+
 func TestPrepareDaemonRuntimeBeforeBind_EmptyRuntime(t *testing.T) {
 	testDaemonHome(t)
 	defer withStartupLock(t)()
