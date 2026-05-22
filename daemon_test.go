@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -311,6 +312,15 @@ func testDaemonHome(t *testing.T) {
 	}
 }
 
+func withStartupLock(t *testing.T) func() {
+	t.Helper()
+	lock, err := acquireStartupLock()
+	if err != nil {
+		t.Fatalf("acquire startup lock: %v", err)
+	}
+	return func() { releaseStartupLock(lock) }
+}
+
 func TestReadDaemonPIDFromFile_MissingAndValid(t *testing.T) {
 	testDaemonHome(t)
 
@@ -334,8 +344,24 @@ func TestReadDaemonPIDFromFile_MissingAndValid(t *testing.T) {
 	}
 }
 
+func TestAcquireStartupLock_Exclusive(t *testing.T) {
+	testDaemonHome(t)
+
+	lock, err := acquireStartupLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseStartupLock(lock)
+
+	_, err = acquireStartupLock()
+	if !errors.Is(err, errStartupLockBusy) {
+		t.Fatalf("second acquire: got %v, want %v", err, errStartupLockBusy)
+	}
+}
+
 func TestPrepareDaemonRuntimeBeforeBind_EmptyRuntime(t *testing.T) {
 	testDaemonHome(t)
+	defer withStartupLock(t)()
 
 	if err := prepareDaemonRuntimeBeforeBind(); err != nil {
 		t.Fatal(err)
@@ -344,6 +370,7 @@ func TestPrepareDaemonRuntimeBeforeBind_EmptyRuntime(t *testing.T) {
 
 func TestPrepareDaemonRuntimeBeforeBind_RejectsWhenPIDFileMatchesLiveMcpProxyProcess(t *testing.T) {
 	testDaemonHome(t)
+	defer withStartupLock(t)()
 
 	if !isMcpProxyDaemonProcess(os.Getpid()) {
 		t.Skip("test binary is not named like mcp-proxy; skipping live-PID rejection case")
@@ -364,6 +391,7 @@ func TestPrepareDaemonRuntimeBeforeBind_RejectsWhenPIDFileMatchesLiveMcpProxyPro
 
 func TestPrepareDaemonRuntimeBeforeBind_RemovesStalePIDWhenLivePIDIsNotMcpProxy(t *testing.T) {
 	testDaemonHome(t)
+	defer withStartupLock(t)()
 
 	// PID 1 is always alive on Unix/macOS and is not mcp-proxy.
 	if err := os.WriteFile(daemonPIDPath(), []byte("1\n"), 0o644); err != nil {
@@ -392,6 +420,7 @@ func testDaemonHomeShort(t *testing.T) {
 
 func TestPrepareDaemonRuntimeBeforeBind_RejectsWhenControlSocketResponds(t *testing.T) {
 	testDaemonHomeShort(t)
+	defer withStartupLock(t)()
 
 	socketPath := daemonSocketPath()
 	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
@@ -420,6 +449,7 @@ func TestPrepareDaemonRuntimeBeforeBind_RejectsWhenControlSocketResponds(t *test
 
 func TestPrepareDaemonRuntimeBeforeBind_RemovesStalePIDAndSocketPaths(t *testing.T) {
 	testDaemonHome(t)
+	defer withStartupLock(t)()
 
 	stalePID := 9_999_999
 	if err := os.WriteFile(daemonPIDPath(), []byte(fmt.Sprintf("%d\n", stalePID)), 0o644); err != nil {
