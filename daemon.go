@@ -301,7 +301,6 @@ func runDaemonUntilSignal(d *daemon, config *Config) error {
 		return fmt.Errorf("write daemon PID file: %w", err)
 	}
 	releaseStartupLock(startupLock)
-	startupLock = nil
 	runtimeOwned = true
 
 	runErr := d.serveDaemonUntilSignal(config, tcpLn, socketPath)
