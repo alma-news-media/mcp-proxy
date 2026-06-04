@@ -22,10 +22,13 @@ import (
 )
 
 const (
-	daemonSocketName = "darkside-mcp-proxy.sock"
-	daemonPIDName    = "darkside-mcp-proxy.pid"
-	daemonRunDir     = ".local/run"
+	daemonSocketName      = "darkside-mcp-proxy.sock"
+	daemonPIDName         = "darkside-mcp-proxy.pid"
+	daemonStartupLockName = "darkside-mcp-proxy.startup.lock"
+	daemonRunDir          = ".local/run"
 )
+
+var errStartupLockBusy = errors.New("daemon startup lock held")
 
 func daemonRunPath() string {
 	home, err := os.UserHomeDir()
@@ -41,6 +44,57 @@ func daemonSocketPath() string {
 
 func daemonPIDPath() string {
 	return filepath.Join(daemonRunPath(), daemonPIDName)
+}
+
+func daemonStartupLockPath() string {
+	return filepath.Join(daemonRunPath(), daemonStartupLockName)
+}
+
+// startupLock serializes daemon startup so only one process probes and unlinks stale runtime files.
+type startupLock struct {
+	file *os.File
+}
+
+func acquireStartupLock() (*startupLock, error) {
+	if err := os.MkdirAll(daemonRunPath(), 0o755); err != nil {
+		return nil, fmt.Errorf("create run directory: %w", err)
+	}
+	f, err := os.OpenFile(daemonStartupLockPath(), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			return nil, errStartupLockBusy
+		}
+		return nil, err
+	}
+	return &startupLock{file: f}, nil
+}
+
+func releaseStartupLock(lock *startupLock) {
+	if lock == nil || lock.file == nil {
+		return
+	}
+	path := lock.file.Name()
+	_ = lock.file.Close()
+	_ = os.Remove(path)
+	lock.file = nil
+}
+
+// acquireDaemonRuntimeForStartup takes the startup lock and removes stale runtime files.
+// On failure it releases the lock and cancels the daemon context.
+func acquireDaemonRuntimeForStartup(d *daemon) (*startupLock, error) {
+	lock, err := acquireStartupLock()
+	if err != nil {
+		if errors.Is(err, errStartupLockBusy) {
+			return nil, fmt.Errorf("daemon already running: another mcp-proxy instance is starting or active")
+		}
+		return nil, fmt.Errorf("acquire startup lock: %w", err)
+	}
+	if err := prepareDaemonRuntimeBeforeBind(); err != nil {
+		releaseStartupLock(lock)
+		d.cancel()
+		return nil, err
+	}
+	return lock, nil
 }
 
 // readDaemonPIDFromFile returns the PID from the daemon PID file. If the file is
@@ -74,23 +128,32 @@ func daemonProcessAlive(pid int) bool {
 }
 
 // prepareDaemonRuntimeBeforeBind ensures no other daemon owns the PID/socket paths.
-// It removes stale socket and PID files only when the stored PID is missing, invalid, or not alive.
+// It removes stale socket and PID files when the control plane is down and the stored PID
+// does not refer to a live mcp-proxy process. The caller must hold the startup lock.
 func prepareDaemonRuntimeBeforeBind() error {
-	if isDaemonRunning() {
-		return fmt.Errorf("daemon already running: another mcp-proxy instance is active (PID file or control socket)")
+	if daemonControlPlaneHealthy(context.Background()) {
+		return fmt.Errorf("daemon already running: another mcp-proxy instance is active (control socket)")
 	}
 	oldPID, err := readDaemonPIDFromFile()
 	if err != nil {
 		return fmt.Errorf("read daemon PID file: %w", err)
 	}
-	if oldPID != 0 && daemonProcessAlive(oldPID) {
+	if oldPID != 0 && isMcpProxyDaemonProcess(oldPID) {
 		return fmt.Errorf("daemon already running: another mcp-proxy instance is active (PID %d)", oldPID)
 	}
-	if oldPID != 0 {
-		_ = os.Remove(daemonSocketPath())
-		_ = os.Remove(daemonPIDPath())
-	} else {
-		_ = os.Remove(daemonSocketPath())
+	if err := removePathIgnoringNotExist(daemonSocketPath()); err != nil {
+		return fmt.Errorf("remove stale daemon socket: %w", err)
+	}
+	if err := removePathIgnoringNotExist(daemonPIDPath()); err != nil {
+		return fmt.Errorf("remove stale daemon PID file: %w", err)
+	}
+	return nil
+}
+
+// removePathIgnoringNotExist unlinks path; missing files are not an error.
+func removePathIgnoringNotExist(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }
@@ -142,10 +205,6 @@ func newDaemonForConfig(config *Config) (*daemon, error) {
 		return nil, fmt.Errorf("create run directory: %w", err)
 	}
 
-	if err := prepareDaemonRuntimeBeforeBind(); err != nil {
-		return nil, err
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &daemon{
 		config:  config,
@@ -176,18 +235,19 @@ func newDaemonForConfig(config *Config) (*daemon, error) {
 	return d, nil
 }
 
-func runDaemonUntilSignal(d *daemon, config *Config) error {
-	socketPath := daemonSocketPath()
+// listenDaemonSockets binds the Unix control socket and TCP proxy listener.
+func (d *daemon) listenDaemonSockets(config *Config) (tcpLn net.Listener, socketPath string, err error) {
+	socketPath = daemonSocketPath()
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
 		// Do not remove PID/socket paths: bind failed; cleanup could delete another daemon's files.
 		d.cancel()
-		return fmt.Errorf("listen unix socket: %w", err)
+		return nil, "", fmt.Errorf("listen unix socket: %w", err)
 	}
 	if err := os.Chmod(socketPath, 0o600); err != nil {
 		ln.Close()
 		d.cancel()
-		return fmt.Errorf("chmod socket: %w", err)
+		return nil, "", fmt.Errorf("chmod socket: %w", err)
 	}
 	d.socketLn = ln
 
@@ -195,28 +255,65 @@ func runDaemonUntilSignal(d *daemon, config *Config) error {
 	socketMux.HandleFunc("POST /config", d.handleConfigMerge)
 	d.socketServer = &http.Server{Handler: socketMux}
 
-	tcpLn, err := listenTCPReuseAddr(config.McpProxy.Addr)
+	tcpLn, err = listenTCPReuseAddr(config.McpProxy.Addr)
 	if err != nil {
 		_ = d.socketServer.Shutdown(context.Background())
 		ln.Close()
 		d.cleanup()
 		d.cancel()
-		return fmt.Errorf("listen tcp: %w", err)
+		return nil, "", fmt.Errorf("listen tcp: %w", err)
+	}
+	return tcpLn, socketPath, nil
+}
+
+func abortDaemonListenSetup(d *daemon) {
+	if d.socketServer != nil {
+		_ = d.socketServer.Shutdown(context.Background())
+	}
+	if d.socketLn != nil {
+		_ = d.socketLn.Close()
+	}
+	d.cleanup()
+	d.cancel()
+}
+
+func runDaemonUntilSignal(d *daemon, config *Config) error {
+	startupLock, err := acquireDaemonRuntimeForStartup(d)
+	if err != nil {
+		return err
+	}
+	defer releaseStartupLock(startupLock)
+
+	runtimeOwned := false
+	defer func() {
+		if runtimeOwned {
+			d.cleanup()
+		}
+	}()
+
+	tcpLn, socketPath, err := d.listenDaemonSockets(config)
+	if err != nil {
+		return err
 	}
 
 	if err := d.writePIDFile(); err != nil {
-		_ = d.socketServer.Shutdown(context.Background())
-		ln.Close()
-		d.cleanup()
-		d.cancel()
+		abortDaemonListenSetup(d)
 		return fmt.Errorf("write daemon PID file: %w", err)
 	}
+	releaseStartupLock(startupLock)
+	runtimeOwned = true
 
+	runErr := d.serveDaemonUntilSignal(config, tcpLn, socketPath)
+	runtimeOwned = false
+	return runErr
+}
+
+func (d *daemon) serveDaemonUntilSignal(config *Config, tcpLn net.Listener, socketPath string) error {
 	errChan := make(chan error, 2)
 
 	go func() {
 		log.Printf("Unix socket listening on %s", socketPath)
-		if sErr := d.socketServer.Serve(ln); sErr != nil && !errors.Is(sErr, http.ErrServerClosed) {
+		if sErr := d.socketServer.Serve(d.socketLn); sErr != nil && !errors.Is(sErr, http.ErrServerClosed) {
 			errChan <- fmt.Errorf("unix socket server: %w", sErr)
 		}
 	}()
