@@ -434,8 +434,13 @@ func buildMergedServerMap(
 	maps.Copy(merged, existing)
 	for k, v := range incoming {
 		if _, exists := merged[k]; !exists {
-			inheritClientDefaults(v, proxyOpts)
-			merged[k] = v
+			clone := *v
+			if v.Options != nil {
+				optsCopy := *v.Options
+				clone.Options = &optsCopy
+			}
+			inheritClientDefaults(&clone, proxyOpts)
+			merged[k] = &clone
 		}
 	}
 	return merged
