@@ -68,6 +68,19 @@ On success, **`--add-config` prints a single JSON object to stdout** (used by wr
 - `addr` — value from `mcpProxy.addr`, with a leading `:` expanded to `localhost:port` for clients.
 - `servers` — sorted list of all MCP server keys currently registered on the daemon.
 
+## Logging
+
+The binary writes all log output to **stderr** via Go's standard `log` package. There is no built-in log file — where those lines end up depends on how the process is managed.
+
+| Run mode | Where logs go |
+|----------|---------------|
+| Standalone (`--config`) | stderr → terminal (or parent process stderr) |
+| Daemon — macOS launchd | `~/Library/Logs/mcp-proxy.log` (set by `StandardErrorPath` in the plist) |
+| Daemon — Linux/WSL2 systemd | systemd journal: `journalctl --user -u mcp-proxy -f` |
+| Daemon — started by `--add-config` with no daemon running | inherits stderr from the caller |
+
+**Per-request logging** is separate and controlled by `options.logEnabled` in the config. When `true`, each proxied HTTP request is logged at the server level. Startup, connection, and error messages are always emitted regardless of this setting.
+
 ## Endpoints
 
 Given `mcpProxy.baseURL = https://mcp.example.com` and a server key `fetch`:

@@ -126,26 +126,6 @@ func assertMergeResponseAddrAndServerNames(t *testing.T, resp configMergeRespons
 	}
 }
 
-func assertDaemonAddNewServerMergeState(t *testing.T, d *daemon) {
-	t.Helper()
-	if d.config.McpServers["newsvc"] == nil {
-		t.Fatal("expected merged config to include newsvc")
-	}
-	ns := d.config.McpServers["newsvc"]
-	if ns.TransportType != MCPClientTypeStreamable {
-		t.Errorf("newsvc transportType = %q, want streamable-http", ns.TransportType)
-	}
-	if ns.URL != "https://127.0.0.1:9/newsvc" {
-		t.Errorf("newsvc URL = %q", ns.URL)
-	}
-	if ns.Headers["Authorization"] != "Bearer newsvc" {
-		t.Errorf("newsvc headers = %v", ns.Headers)
-	}
-	if d.config.McpServers["github"].URL != "https://127.0.0.1:9/existing" {
-		t.Errorf("github URL mutated: %q", d.config.McpServers["github"].URL)
-	}
-}
-
 func TestHandleConfigMerge_IdenticalNoOp(t *testing.T) {
 	d := newTestDaemon(map[string]*MCPClientConfigV2{
 		"github": {
@@ -173,14 +153,16 @@ func TestHandleConfigMerge_IdenticalNoOp(t *testing.T) {
 	assertMergeResponseAddrAndServerNames(t, resp, "localhost:9090", []string{"github"})
 }
 
-func TestHandleConfigMerge_AddNewServer(t *testing.T) {
-	// Unreachable URLs; default PanicIfInvalid is false so wireServers still completes after failed handshakes.
+func TestHandleConfigMerge_AddNewServer_FailedWireExcluded(t *testing.T) {
+	// Servers with unreachable URLs fail to wire silently (PanicIfInvalid=false).
+	// They must NOT appear in the response or remain in d.config so that callers
+	// (Python runner) never write a proxy URL that returns 404.
 	d := newTestDaemon(map[string]*MCPClientConfigV2{
 		"github": {
 			TransportType: MCPClientTypeStreamable,
 			URL:           "https://127.0.0.1:9/existing",
 			Headers:       map[string]string{"Authorization": "Bearer existing"},
-			Options:       &OptionsV2{}, // prepareServerJobs reads Options.Disabled
+			Options:       &OptionsV2{},
 		},
 	})
 
@@ -199,8 +181,14 @@ func TestHandleConfigMerge_AddNewServer(t *testing.T) {
 	d.handleConfigMerge(w, req)
 
 	resp := requireMergeResponseOK(t, w)
-	assertMergeResponseAddrAndServerNames(t, resp, "localhost:9090", []string{"github", "newsvc"})
-	assertDaemonAddNewServerMergeState(t, d)
+	// Both servers failed to wire (unreachable): neither should be in the response.
+	assertMergeResponseAddrAndServerNames(t, resp, "localhost:9090", []string{})
+	if d.config.McpServers["newsvc"] != nil {
+		t.Error("newsvc should be excluded from daemon config after failed wire")
+	}
+	if d.config.McpServers["github"] != nil {
+		t.Error("github should be excluded from daemon config after failed re-wire")
+	}
 }
 
 func TestHandleConfigMerge_MultipleConflicts(t *testing.T) {
