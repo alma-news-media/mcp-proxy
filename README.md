@@ -39,6 +39,36 @@ Or install a development version from any pushed branch or tagged release:
 go install github.com/alma-news-media/mcp-proxy@<branch|version tag>
 ```
 
+### Run as a user daemon
+
+`scripts/install-user-daemon.sh` installs mcp-proxy as a persistent background service that starts automatically on login. It supports **macOS** (launchd agent) and **Linux / WSL2** (systemd user unit).
+
+```bash
+# after go install or building from source
+bash scripts/install-user-daemon.sh
+```
+
+What the script does:
+
+1. **Detects the platform** — macOS via `uname -s`, WSL2/Linux via `/proc/version`.
+2. **Finds the binary** — checks `$PATH`, then `~/.local/bin` and `/usr/local/bin`. Exits with install instructions if not found.
+3. **Creates a minimal config** at `~/.config/mcp-proxy/config.json` (binds to `127.0.0.1:9090`, SSE transport, empty `mcpServers`). Skipped if the file already exists.
+4. **Installs the service**:
+   - macOS: writes `~/Library/LaunchAgents/media.almanews.mcp-proxy.plist`, then `launchctl load`.
+   - Linux/WSL2: writes `~/.config/systemd/user/mcp-proxy.service`, then `systemctl --user enable --now`. Requires systemd user sessions; on WSL2 this needs `[boot] systemd=true` in `/etc/wsl.conf`.
+
+**Idempotency** — re-running the script is safe:
+- The **config file is never overwritten** once it exists, so any customisations you have made are preserved.
+- The **service definition** (plist or unit file) is always rewritten and the service restarted. This makes re-running the script the correct way to pick up a new binary after `go install`.
+
+After installation, add MCP servers to the running daemon from any workspace config:
+
+```bash
+mcp-proxy --add-config path/to/workspace-config.json
+```
+
+See [docs/USAGE.md](docs/USAGE.md) for the full `--add-config` and `--daemon` reference.
+
 ### Commit messages
 
 Automated releases expect [Conventional Commits](https://www.conventionalcommits.org/). The analyzer treats `feat` as minor, `fix` and several other types (including `chore`, `ci`, `docs`) as patch—see `.semrelrc`. If you merge PRs with **merge commits**, the subject line on `master` is often `Merge pull request #…`, which is not conventional; prefer **squash merge** (or rebase) so the merged commit message stays `feat: …` / `fix: …`.
