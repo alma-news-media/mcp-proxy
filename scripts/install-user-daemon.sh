@@ -102,6 +102,11 @@ install_macos() {
     <string>${log_dir}/mcp-proxy.log</string>
     <key>StandardErrorPath</key>
     <string>${log_dir}/mcp-proxy.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>${PATH}</string>
+    </dict>
 </dict>
 </plist>
 EOF
@@ -112,6 +117,7 @@ EOF
     info "Logs:  tail -f $log_dir/mcp-proxy.log"
     info "Stop:  launchctl unload $plist"
     info "Start: launchctl load $plist"
+    info "PATH:  captured at install time — re-run installer after adding new tools to PATH"
 }
 
 install_linux() {
@@ -127,7 +133,11 @@ On WSL2, enable systemd by adding the following to /etc/wsl.conf:
 Then restart WSL: wsl --shutdown"
     fi
 
-    mkdir -p "$unit_dir"
+    local env_file="${CONFIG_DIR}/env"
+    mkdir -p "$CONFIG_DIR" "$unit_dir"
+    printf 'PATH=%s\n' "$PATH" > "$env_file"
+    ok "Wrote service environment to $env_file"
+
     cat > "$unit" <<EOF
 [Unit]
 Description=MCP Proxy daemon
@@ -138,6 +148,7 @@ Type=simple
 ExecStart=${binary} --config ${CONFIG_FILE} --daemon
 Restart=on-failure
 RestartSec=5s
+EnvironmentFile=-${CONFIG_DIR}/env
 
 [Install]
 WantedBy=default.target
@@ -156,6 +167,7 @@ EOF
     info "Status: systemctl --user status $SERVICE"
     info "Logs:   journalctl --user -u $SERVICE -f"
     info "Stop:   systemctl --user stop $SERVICE"
+    info "PATH:   captured at install time — re-run installer after adding new tools to PATH"
 }
 
 main() {
