@@ -67,7 +67,11 @@ After installation, add MCP servers to the running daemon from any workspace con
 mcp-proxy --add-config path/to/workspace-config.json
 ```
 
-See [docs/USAGE.md](docs/USAGE.md) for the full `--add-config` and `--daemon` reference.
+**Logs** — when run as a user service, logs go to:
+- macOS: `~/Library/Logs/mcp-proxy.log`
+- Linux/WSL2: `journalctl --user -u mcp-proxy -f`
+
+See [docs/USAGE.md](docs/USAGE.md) for the full `--add-config`, `--daemon`, and logging reference.
 
 ### Commit messages
 

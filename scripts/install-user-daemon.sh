@@ -44,7 +44,10 @@ write_config() {
         return
     fi
     mkdir -p "$CONFIG_DIR"
-    cat > "$CONFIG_FILE" <<'EOF'
+    chmod 700 "$CONFIG_DIR"
+    (
+      umask 077
+      cat > "$CONFIG_FILE" <<'EOF'
 {
   "mcpProxy": {
     "baseURL": "http://127.0.0.1:9090",
@@ -59,6 +62,7 @@ write_config() {
   "mcpServers": {}
 }
 EOF
+    )
     ok "Created minimal config at $CONFIG_FILE"
 }
 
