@@ -103,11 +103,20 @@ func (h *swappableHandler) swap(next http.Handler) {
 	h.handler.Store(http.HandlerFunc(next.ServeHTTP))
 }
 
-// wireResult holds the output of wireServers: the built mux and closers for
-// all upstream MCP clients that were successfully connected.
+// wireResult holds the output of wireServers: the built mux, closers for
+// all upstream MCP clients that were successfully connected, and the set of
+// server names that were actually registered (closers may be fewer if a
+// client failed silently with PanicIfInvalid=false).
 type wireResult struct {
-	handler http.Handler
-	closers []func()
+	handler    http.Handler
+	closers    []func()
+	registered map[string]bool
+}
+
+// wireJobResult carries the server name and closer for one successfully-wired job.
+type wireJobResult struct {
+	name   string
+	closer func()
 }
 
 func buildMiddlewares(name string, opts *OptionsV2) []MiddlewareFunc {
@@ -179,7 +188,7 @@ func wireServers(ctx context.Context, config *Config, baseURL *url.URL) (*wireRe
 	}
 
 	var eg errgroup.Group
-	closerCh := make(chan func(), len(jobs))
+	resultCh := make(chan wireJobResult, len(jobs))
 	for _, job := range jobs {
 		eg.Go(func() error {
 			closer, cErr := job.connectAndRegister(ctx)
@@ -187,7 +196,7 @@ func wireServers(ctx context.Context, config *Config, baseURL *url.URL) (*wireRe
 				return cErr
 			}
 			if closer != nil {
-				closerCh <- closer
+				resultCh <- wireJobResult{name: job.name, closer: closer}
 			}
 			return nil
 		})
@@ -196,14 +205,16 @@ func wireServers(ctx context.Context, config *Config, baseURL *url.URL) (*wireRe
 	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
-	close(closerCh)
+	close(resultCh)
 	log.Printf("All clients initialized")
 
 	var closers []func()
-	for fn := range closerCh {
-		closers = append(closers, fn)
+	registered := make(map[string]bool)
+	for r := range resultCh {
+		closers = append(closers, r.closer)
+		registered[r.name] = true
 	}
-	return &wireResult{handler: httpMux, closers: closers}, nil
+	return &wireResult{handler: httpMux, closers: closers, registered: registered}, nil
 }
 
 // awaitShutdown blocks until SIGINT or SIGTERM, then gracefully shuts down

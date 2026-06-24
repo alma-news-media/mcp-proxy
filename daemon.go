@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -404,6 +405,70 @@ func parseConfigMergeIncoming(body []byte, w http.ResponseWriter) (*configMergeI
 	return &incoming, true
 }
 
+// detectMergeConflicts scans incoming servers against existing ones.
+// It returns a sorted list of conflicting names and whether new servers
+// require a full re-wire of the daemon.
+func detectMergeConflicts(
+	existing, incoming map[string]*MCPClientConfigV2,
+) (conflicts []string, needsRebuild bool) {
+	for name, incomingDef := range incoming {
+		existingDef, exists := existing[name]
+		if !exists {
+			needsRebuild = true
+			continue
+		}
+		if !mcpClientConfigEqual(existingDef, incomingDef) {
+			conflicts = append(conflicts, name)
+		}
+	}
+	return
+}
+
+// buildMergedServerMap returns a new map with all existing servers plus any
+// incoming servers that are not already present (new servers inherit proxy defaults).
+func buildMergedServerMap(
+	existing, incoming map[string]*MCPClientConfigV2,
+	proxyOpts *OptionsV2,
+) map[string]*MCPClientConfigV2 {
+	merged := make(map[string]*MCPClientConfigV2, len(existing)+len(incoming))
+	maps.Copy(merged, existing)
+	for k, v := range incoming {
+		if _, exists := merged[k]; !exists {
+			inheritClientDefaults(v, proxyOpts)
+			merged[k] = v
+		}
+	}
+	return merged
+}
+
+// filterToRegisteredServers returns a new Config that only includes servers
+// present in the registered set. Servers that failed to wire silently
+// (PanicIfInvalid=false) are excluded and logged so callers never write a
+// proxy URL that would return 404.
+func filterToRegisteredServers(candidate *Config, registered map[string]bool) *Config {
+	routed := make(map[string]*MCPClientConfigV2, len(registered))
+	for name, cfg := range candidate.McpServers {
+		if registered[name] {
+			routed[name] = cfg
+		} else {
+			log.Printf("<%s> Server was not registered (connection failed); excluded from daemon config", name)
+		}
+	}
+	return &Config{McpProxy: candidate.McpProxy, McpServers: routed}
+}
+
+// applyWireResult atomically installs result into the daemon, closes old
+// connections, and stores newConfig as the current configuration.
+func (d *daemon) applyWireResult(result *wireResult, newConfig *Config) {
+	oldClosers := d.closers
+	d.hSwitch.swap(result.handler)
+	d.closers = result.closers
+	d.config = newConfig
+	for _, fn := range oldClosers {
+		fn()
+	}
+}
+
 func (d *daemon) handleConfigMerge(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -419,19 +484,7 @@ func (d *daemon) handleConfigMerge(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	var conflicts []string
-	needsRebuild := false
-	for name, incomingDef := range incoming.McpServers {
-		existingDef, exists := d.config.McpServers[name]
-		if !exists {
-			needsRebuild = true
-			continue
-		}
-		if !mcpClientConfigEqual(existingDef, incomingDef) {
-			conflicts = append(conflicts, name)
-		}
-	}
-
+	conflicts, needsRebuild := detectMergeConflicts(d.config.McpServers, incoming.McpServers)
 	if len(conflicts) > 0 {
 		sort.Strings(conflicts)
 		w.Header().Set("Content-Type", "application/json")
@@ -445,21 +498,8 @@ func (d *daemon) handleConfigMerge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	merged := make(map[string]*MCPClientConfigV2, len(d.config.McpServers)+len(incoming.McpServers))
-	for k, v := range d.config.McpServers {
-		merged[k] = v
-	}
-	for k, v := range incoming.McpServers {
-		if _, exists := merged[k]; !exists {
-			inheritClientDefaults(v, d.config.McpProxy.Options)
-			merged[k] = v
-		}
-	}
-
-	newConfig := &Config{
-		McpProxy:   d.config.McpProxy,
-		McpServers: merged,
-	}
+	merged := buildMergedServerMap(d.config.McpServers, incoming.McpServers, d.config.McpProxy.Options)
+	newConfig := &Config{McpProxy: d.config.McpProxy, McpServers: merged}
 	result, wireErr := wireServers(d.ctx, newConfig, d.baseURL)
 	if wireErr != nil {
 		log.Printf("Failed to wire servers after merge: %v", wireErr)
@@ -467,15 +507,7 @@ func (d *daemon) handleConfigMerge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	oldClosers := d.closers
-	d.hSwitch.swap(result.handler)
-	d.closers = result.closers
-	d.config = newConfig
-
-	for _, fn := range oldClosers {
-		fn()
-	}
-
+	d.applyWireResult(result, filterToRegisteredServers(newConfig, result.registered))
 	d.respondWithServerList(w)
 }
 
