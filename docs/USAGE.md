@@ -37,7 +37,7 @@ Runs the same HTTP server as standalone, plus a **control plane** on a Unix doma
 | Control socket | `~/.local/run/darkside-mcp-proxy.sock` |
 | PID file | `~/.local/run/darkside-mcp-proxy.pid` |
 
-The `darkside-mcp-proxy` file prefix is intentional for this fork’s runtime layout (distinct from the `mcp-proxy` binary name) so control files are easy to identify alongside other tools.
+The `darkside-mcp-proxy` file prefix is intentional for this fork’s runtime layout (distinct from the `mcp-proxy` binary name) so control files are easy to identify alongside other tools. The daemon accepts control connections only from its own user. Peer credential checks are supported on Linux, macOS, and FreeBSD; daemon mode fails to start on other platforms.
 
 ### Add config (`--add-config`)
 
