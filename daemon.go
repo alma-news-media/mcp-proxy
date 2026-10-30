@@ -238,6 +238,10 @@ func newDaemonForConfig(config *Config) (*daemon, error) {
 
 // listenDaemonSockets binds the Unix control socket and TCP proxy listener.
 func (d *daemon) listenDaemonSockets(config *Config) (tcpLn net.Listener, socketPath string, err error) {
+	if !daemonPeerCredentialsSupported() {
+		d.cancel()
+		return nil, "", fmt.Errorf("daemon control socket: peer credentials are unsupported on this platform")
+	}
 	socketPath = daemonSocketPath()
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
@@ -250,7 +254,7 @@ func (d *daemon) listenDaemonSockets(config *Config) (tcpLn net.Listener, socket
 		d.cancel()
 		return nil, "", fmt.Errorf("chmod socket: %w", err)
 	}
-	d.socketLn = ln
+	d.socketLn = &daemonControlListener{Listener: ln}
 
 	socketMux := http.NewServeMux()
 	socketMux.HandleFunc("POST /config", d.handleConfigMerge)

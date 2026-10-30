@@ -7,6 +7,7 @@ require (
 	github.com/mark3labs/mcp-go v0.44.0
 	github.com/tbxark/optional-go v0.0.2
 	golang.org/x/sync v0.19.0
+	golang.org/x/sys v0.39.0
 )
 
 require (
