@@ -150,7 +150,7 @@ func (c *Client) addToolsToServer(ctx context.Context, mcpServer *server.MCPServ
 		return true
 	}
 
-	if c.options != nil && c.options.ToolFilter != nil && len(c.options.ToolFilter.List) > 0 {
+	if c.options != nil && c.options.ToolFilter != nil {
 		filterSet := make(map[string]struct{})
 		mode := ToolFilterMode(strings.ToLower(string(c.options.ToolFilter.Mode)))
 		for _, toolName := range c.options.ToolFilter.List {
